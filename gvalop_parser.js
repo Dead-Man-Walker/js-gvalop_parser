@@ -1,4 +1,6 @@
-```gvalop_parser.py parses a string of Grouped VALues and OPerators into
+"use strict";
+/*gvalop_parser.py parses a string of Grouped VALues and OPerators into
+
 a group tree of values, operators, and subgroups, which can then be evaluated.
 
 A group is represented by a grouping object, identified by a start and an end string,
@@ -26,55 +28,52 @@ since consumption collapses the tree, the evaluation of a group happens on a cop
 
 Example:
 
-    # A list of songs we want to filter by artists through a parsed string
-    songs_list = [
+    // A list of songs we want to filter by artists through a parsed string
+    const songs_list = [
         "Bob Marley - Jammin",
         "Stephen Marley - Break Us Apart",
         "Stephen & Damian Marley - Medication",
         "Ziggy Marley - Dragonfly",
         "Duane Stephenson - Exhale",
         "Tanya Stephens - It's a Pity"
-    ]
+    ];
 
-    # The string to be parsed. Here we want to filter for songs that must contain a
-    # 'marley' in any case, while also containing a 'stephen' with neither
-    # a 'ziggy' nor a 'damian', or a 'bob'
-    artists_filter = "marley && (stephen && !(ziggy || damian) || bob)"
+    // The string to be parsed. Here we want to filter for songs that must contain a
+    // 'marley' in any case, while also containing a 'stephen' with neither
+    // a 'ziggy' nor a 'damian', or a 'bob'
+    const artists_filter = "marley && (stephen && !(ziggy || damian) || bob)";
 
-    # Creating a set of operators. Here we use the three logical operators AND, OR, and NOT
-    import operator
+    // Creating a set of operators. Here we use the three logical operators AND, OR, and NOT
+    
+    const opAnd = new OperatorBinary(representation="&&", func=(a,b)=>a && b);
+    const opOr = new OperatorBinary(representation="||", func=(a,b) => a || b);
+    const opNot = new OperatorUnary(representation="!", func=a => !a);
 
-    opAnd = OperatorBinary(representation="&&", func=operator.and_)
-    opOr = OperatorBinary(representation="||", func=operator.or_)
-    opNot = OperatorUnary(representation="!", func=operator.not_)
+    // Creating a grouping
+    const grouping = new Grouping("(", ")");
 
-    # Creating a grouping
-    grouping = Grouping("(", ")")
+    // Creating the parser with the just created operators and grouping
+    const parser = new Parser(operators=[opAnd, opOr, opNot], groupings=[grouping]);
 
-    # Creating the parser with the just created operators and grouping
-    parser = Parser(operators=[opAnd, opOr, opNot], groupings=[grouping])
+    // Parse the filter string and fetch the returned root group
+    const root = parser.parse(artists_filter);
 
-    # Parse the filter string and fetch the returned root group
-    root = parser.parse(artists_filter)
+    // Setup a filter function that (re)evaluates the parsed root
+    // for each song
+    const songInFilterValue = (song) => {
+        const result = root.evaluate(
+            (parser_value) => song.toLowerCase().includes(parser_value)
+        );
+        return result.value;
+    }
 
-    # Setup a filter function that (re)evaluates the parsed root
-    # for each song
-    def songInFilterValue(song):
-        result = root.evaluate(
-            lambda parser_value: parser_value in song.lower()
-        )
-        return result.value
+    // Filter the songs list
+    const filtered_list = songs_list.filter(song => songInFilterValue(song));
 
-    # Filter the songs list
-    filtered_list = [
-        song for song in songs_list if songInFilterValue(song)
+    console.log(filtered_list);
+    // >>> ['Bob Marley - Jammin', 'Stephen Marley - Break Us Apart']
 
-    ]
-
-    print(filtered_list)
-    # >>> ['Bob Marley - Jammin', 'Stephen Marley - Break Us Apart']
-
-```
+*/
 
 
 /*Provides a default consume method intended to be overwritten to consume itself*/
@@ -84,8 +83,8 @@ class Consumable{
     This process may consume other items of the list as well.
     Returns (<modified items>, <modified current index>)
     */
-    consume(items, index, func=None) {
-        return (items, index)
+    consume(items, index, func=null){
+        return {items, index};
     }
 }
 
@@ -114,13 +113,13 @@ class Group extends Consumable{
     /* Returns the character count of the parsed string that has been consumed up to this point */
     get consumed_length(){
         let consumed_length = 0;
-        if('consumed_length' in this.children[0])
+        if(this.children.length > 0 && this.children[0] !== undefined && 'consumed_length' in this.children[0])
             consumed_length = this.children[0].consumed_length;
         if(this.parent === null)
             return consumed_length;
         if(this.parent.children[0] === this)
             return consumed_length + this.grouping.start.length;
-        for(const parent_child in this.parent.children){
+        for(const parent_child of this.parent.children){
             if(parent_child === this)
                 break;
             if('consumed_length' in parent_child){
@@ -129,13 +128,14 @@ class Group extends Consumable{
                 consumed_length += parent_child.length;
             }
         }
+
         return consumed_length+1;
     }
 
     createDeepCopy(){
         const copy = new this.constructor(
             this.parent,
-            this.grouping.createDeepCopy()
+            this.grouping?.createDeepCopy() ?? null
         );
         copy.children = this.children.map(child => child.createDeepCopy());
         return copy;
@@ -143,9 +143,15 @@ class Group extends Consumable{
 
     consume(items=null, index=null, func=null){
         let child_i = 0;
-        while(child < this.children.length){
+        while(child_i < this.children.length){
+            if(this.children[child_i] === undefined){
+                child_i++;
+                continue;
+            }
             try{
-                [this.children, child_i] = this.children[child_i].consume(this.children, child_i, func);
+                const consumed = this.children[child_i].consume(this.children, child_i, func);
+                this.children = consumed.items;
+                child_i = consumed.index;
             }catch (e){
                 if(!(e instanceof InvalidOperandError))
                     throw e;
@@ -165,7 +171,7 @@ class Group extends Consumable{
         if(items === null || index === null)
             return result;
         items[index] = result;
-        return [items, index];
+        return {items, index};
     }
 
     /*
@@ -191,7 +197,7 @@ class Grouping{
     }
 
     get length(){
-        return this.start.length, this.end.length;
+        return this.start.length + this.end.length;
     }
 
     createDeepCopy(){
@@ -226,36 +232,33 @@ class Operator extends Consumable{
 
 /* A binary operator that consumes its neighboring items to the left and right as an operand */
 class OperatorBinary extends Operator{
-    consume(items, index, func = None){
+    consume(items, index, func = null){
         const left = items[index-1];
         const right = items[index+1];
         if(typeof left === "undefined" || typeof right === "undefined")
             throw new InvalidOperandError("Left or right operand is missing");
         if(!(left instanceof Result))
             throw new InvalidOperandError("Left operand is not a Result object");
-        [items, _] = right.consume(items, index+1, func);
+
+        items = right.consume(items, index+1, func).items;
         const consumed_length = left.consumed_length + this.length + items[index+1].consumed_length;
         const result_value = this.func(left.value, items[index+1].value);
-        items[index] = new Result(result_value, consumed_length);
-        delete items[index+1];
-        delete items[index-1];
-        return [items, index-1];
+        items.splice(index - 1, 3, new Result(result_value, consumed_length));
+        return {items, index:index-1};
     }
 }
 
 
 /* A unary operator that consumes its right neighboring item as an operand */
 class OperatorUnary extends Operator{
-    consume(items, index, func = None) {
+    consume(items, index, func = null) {
         const right = items[index+1];
         if(typeof right === "undefined")
             throw new InvalidOperandError("Right operand is missing");
-        [items, _] = right.consume(items, index+1, func);
+        items = right.consume(items, index+1, func).items;
         const consumed_length = this.length + items[index+1].consumed_length;
-        const result = new Result(self.func(items[index+1].value), consumed_length);
-        items[index] = result;
-        delete items[index+1];
-        return [items, index];
+        items.splice(index, 2, new Result(this.func(items[index+1].value), consumed_length));
+        return {items, index};
     }
 }
 
@@ -282,12 +285,11 @@ class Value extends Consumable{
         return new this.constructor(this.func, this.value);
     }
 
-    consume(items, index, func = None) {
+    consume(items, index, func = null) {
         if(func !== null)
             this.func = func;
-        const result = new Result(this.func(this.value), this.length);
-        items[index] = result;
-        return [items, index];
+        items[index] = new Result(this.func(this.value), this.length);
+        return {items, index};
     }
 }
 
@@ -318,11 +320,11 @@ class ParserError extends Error {
     constructor(msg=null, index=null, ...params){
         if(msg === null)
             msg = "An error occured while parsing. This is probably due to invalid syntax.";
-        super(msg, ...params);
+        super(msg);
         // Maintains proper stack trace for where our error was thrown (only available on V8)
-        if (Error.captureStackTrace) {
-            Error.captureStackTrace(this, ParserError);
-        }
+        //if (Error.captureStackTrace) {
+        //    Error.captureStackTrace(this, ParserError);
+        //}
         this.index = index;
     }
 }
@@ -359,11 +361,11 @@ class Parser{
     }
 
     _tryConsumeGroupStart(data){
-        for(const grouping in this.groupings){
+        for(const grouping of this.groupings){
             if(this._isSubstringAtIndex(data["string"], data["index"], grouping.start)){
                 data["current_value"] = this._pushValue(data["current_group"], data["current_value"]);
                 const new_group = new this.GroupClass(data["current_group"], grouping);
-                data["current_group"].children.append(new_group);
+                data["current_group"].children.push(new_group);
                 data["current_group"] = new_group;
                 data["index"] += grouping.start.length;
                 return true;
@@ -386,10 +388,10 @@ class Parser{
     }
 
     _tryConsumeOperator(data){
-        for(const op in this.operators){
+        for(const op of this.operators){
             if(this._isSubstringAtIndex(data["string"], data["index"], op.representation)){
                 data["current_value"] = this._pushValue(data["current_group"], data["current_value"]);
-                data["current_group"].children.append(op);
+                data["current_group"].children.push(op);
                 data["index"] += op.length;
                 return true;
             }
@@ -398,22 +400,22 @@ class Parser{
     }
 
     _consumeValue(data) {
-        data["current_value"].value += data["string"][data["index"]]
-        data["index"] += 1
+        data["current_value"].value += data["string"][data["index"]];
+        data["index"] += 1;
     }
 
-    _isSubstringAtIndex(self, string, index, sub){
-        return string.substr(index, sub.length) === sub;
+    _isSubstringAtIndex(string, index, sub){
+        return string.substring(index, index+sub.length) === sub;
     }
 
 
     _getNewValue(){
         return new this.ValueClass(this.evaluation_func);
     }
-    _pushValue(self, group, value) {
+    _pushValue(group, value) {
         value.value = value.value.trim();
         if(value.value) {
-            group.children.append(value);
+            group.children.push(value);
             value = this._getNewValue();
         }
         return value;
@@ -421,7 +423,7 @@ class Parser{
 
     /*
     Parses a string into a Group tree and returns the root group.
-    The evalutation function is used as a default for all created Values, but
+    The evaluation function is used as a default for all created Values, but
     other evaluation functions may be passed and used when evaluation a group
     */
     parse(string, evaluation_func=(x=>x)){
